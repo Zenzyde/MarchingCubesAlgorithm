@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System;
+using System.Linq;
 
 public static class MarchingCubes
 {
@@ -9,11 +10,13 @@ public static class MarchingCubes
 	private static List<int> triangles = new List<int>();
 	private static List<Vector2> uvs = new List<Vector2>();
 	private static Vector3 gridMin, gridMax, gridNoiseOffset;
-	private static float gridCellRadius, gridNoiseScale;
+	private static float gridCellRadius, gridNoiseScale, gridNoiseHeight2D;
 	private static double cellVisibleThreshold;
 	private static CubeData.CubeConfiguration configuration;
 	private static bool inverseTriangles = false;
 	private static bool gridHasUpdated = false;
+	private static bool march2D = false;
+	private static float specificConfigRadius;
 
 	public static List<GridCell> GetCreateGrid(Vector3 min, Vector3 max, Vector3 noiseOffset, float cellRadius, float noiseScale, double visibleThreshold,
 		CubeData.CubeConfiguration config = CubeData.CubeConfiguration.perlinNoise)
@@ -81,6 +84,53 @@ public static class MarchingCubes
 		return true;
 	}
 
+	public static Mesh GetPredefinedGridMesh(List<GridCell> grid)
+	{
+		Mesh mesh = new Mesh();
+
+		mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; //increase max vertices per mesh
+		mesh.name = "ProceduralMesh";
+
+		IEnumerator createMesh = CreateMesh(grid, cellVisibleThreshold);
+		bool done = !createMesh.MoveNext();
+		while (!done)
+		{
+			done = !createMesh.MoveNext();
+		}
+
+		mesh.vertices = vertices.ToArray();
+		mesh.triangles = triangles.ToArray();
+		mesh.uv = uvs.ToArray();
+		mesh.RecalculateBounds();
+		mesh.RecalculateNormals();
+		return mesh;
+	}
+
+	public static void OverwriteOriginalWithManipulatedGrid(ref List<GridCell> original, List<GridCell> manipulated)
+	{
+		for (int i = original.Count - 1; i >= 0; i--)
+		{
+			for (int j = manipulated.Count - 1; j >= 0; j--)
+			{
+				if (original[i] == manipulated[j])
+				{
+					original[i] = manipulated[j];
+				}
+			}
+		}
+	}
+
+	public static void OverwriteOriginalWithManipulatedCell(ref List<GridCell> original, GridCell manipulated)
+	{
+		for (int i = original.Count - 1; i >= 0; i--)
+		{
+			if (original[i] == manipulated)
+			{
+				original[i] = manipulated;
+			}
+		}
+	}
+
 	public static void SetNoiseScale(float value) { if (value == gridNoiseScale) return; gridNoiseScale = value; gridHasUpdated = true; }
 	public static void SetNoiseOffset(Vector3 value) { if (value == gridNoiseOffset) return; gridNoiseOffset = value; gridHasUpdated = true; }
 	public static void SetGridRadius(float value) { if (value == gridCellRadius) return; gridCellRadius = value; gridHasUpdated = true; }
@@ -88,31 +138,21 @@ public static class MarchingCubes
 	public static void SetInverseTriangles(bool value) { if (value == inverseTriangles) return; inverseTriangles = value; gridHasUpdated = true; }
 	public static void SetGridMin(Vector3 value) { if (value == gridMin) return; gridMin = value; gridHasUpdated = true; }
 	public static void SetGridMax(Vector3 value) { if (value == gridMax) return; gridMax = value; gridHasUpdated = true; }
+	public static void SetMarch2D(bool state) { if (state == march2D) return; march2D = state; gridHasUpdated = true; }
+	public static void SetGridNoiseHeight2D(float value) { if (value == gridNoiseHeight2D) return; gridNoiseHeight2D = value; gridHasUpdated = true; }
+	public static void SetSpecificConfigRadius(float value) { if (value == specificConfigRadius) return; specificConfigRadius = value; gridHasUpdated = true; }
 
-	public static void SetCubeVertex(ref List<GridCell> grid, Vector3 position, double value)
+	static bool IsCubeVertexPositionWithinRequestedPositionRadius(Vector3 cellPos, Vector3 checkPosition, float checkRadius)
 	{
-		Vector3Int pos = position.ToVector3Int();
-		GridCell cell = null;
-		int valueIndex = -1;
-		bool found = false;
-		for (int i = 0; i < grid.Count; i++)
-		{
-			for (int j = 0; j < grid[i].pos.Length; j++)
-			{
-				if (grid[i].pos[j] == pos)
-				{
-					cell = grid[i];
-					valueIndex = j;
-					found = true;
-				}
-				if (found)
-					break;
-			}
-			if (found)
-				break;
-		}
+		return cellPos.x > checkPosition.x - checkRadius && cellPos.x < checkPosition.x + checkRadius &&
+			cellPos.y > checkPosition.y - checkRadius && cellPos.y < checkPosition.y + checkRadius &&
+			cellPos.z > checkPosition.z - checkRadius && cellPos.z < checkPosition.z + checkRadius;
+	}
 
-		cell.val[valueIndex] = value;
+	static double GetCubeDistanceToPosition(GridCell cubeCell, Vector3 checkPosition)
+	{
+		Vector3 center = (cubeCell.pos[0] + cubeCell.pos[6]) / 2f;
+		return Vector3.Distance(center, checkPosition);
 	}
 
 	static List<GridCell> BuildGridCells()
@@ -143,18 +183,42 @@ public static class MarchingCubes
 						new Vector3(x, y + gridCellRadius, z), //HighBackLeft						
 					};
 					cell.val = new double[8];
+
 					if (configuration == CubeData.CubeConfiguration.perlinNoise)
 					{
-						for (int i = 0; i < cell.val.Length; i++)
+						if (!march2D)
 						{
-							cell.val[i] = GetNoiseValue(cell.pos[i], gridNoiseOffset, gridNoiseScale);
+							for (int i = 0; i < cell.val.Length; i++)
+							{
+								cell.val[i] = GetNoiseValue(cell.pos[i], gridNoiseOffset, gridNoiseScale);
+							}
+						}
+						else
+						{
+							for (int i = 0; i < cell.val.Length; i++)
+							{
+								cell.val[i] = GetNoiseValue2D(cell.pos[i], gridNoiseOffset, (gridMax - gridMin), gridNoiseScale, gridNoiseHeight2D);
+							}
 						}
 					}
 					else if (configuration == CubeData.CubeConfiguration.sphere)
 					{
 						for (int i = 0; i < cell.val.Length; i++)
 						{
-							if (Vector3.Distance(cell.pos[i], (gridMin + gridMax) / 2f) < 2f)
+							if (Vector3.Distance(cell.pos[i], (gridMin + gridMax) / 2f) < (specificConfigRadius == 0.0f ? 2f : specificConfigRadius))
+								cell.val[i] = 0;
+							else
+								cell.val[i] = 1;
+						}
+					}
+					else if (configuration == CubeData.CubeConfiguration.cube)
+					{
+						for (int i = 0; i < cell.val.Length; i++)
+						{
+							Vector3 differenceVector = (cell.pos[i] - ((gridMin + gridMax) / 2f));
+							Vector3 distance = specificConfigRadius == 0.0f ? new Vector3(2.5f, 2.5f, 2.5f) : Vector3.one * specificConfigRadius;
+							if (differenceVector.x < -distance.x || differenceVector.y < -distance.x || differenceVector.z < -distance.x ||
+								differenceVector.x > distance.x || differenceVector.y > distance.x || differenceVector.z > distance.x)
 								cell.val[i] = 1;
 							else
 								cell.val[i] = 0;
@@ -299,29 +363,6 @@ public static class MarchingCubes
 		}
 	}
 
-	/*
-   Linearly interpolate the position where an isosurface cuts
-   an edge between two vertices, each with their own scalar value
-*/
-	static Vector3 VertexInterp(double cellVisibleThreshold, Vector3 p1, Vector3 p2, double valp1, double valp2)
-	{
-		double mu;
-		Vector3 p;
-
-		if (Math.Abs(cellVisibleThreshold - valp1) < 0.00001)
-			return (p1);
-		if (Math.Abs(cellVisibleThreshold - valp2) < 0.00001)
-			return (p2);
-		if (Math.Abs(valp1 - valp2) < 0.00001)
-			return (p1);
-		mu = (cellVisibleThreshold - valp1) / (valp2 - valp1);
-		p.x = p1.x + (float)mu * (p2.x - p1.x);
-		p.y = p1.y + (float)mu * (p2.y - p1.y);
-		p.z = p1.z + (float)mu * (p2.z - p1.z);
-
-		return (p);
-	}
-
 	static Vector3 InterpolateVerts(double cellVisibleThreshold, Vector3 p1, Vector3 p2, double valp1, double valp2)
 	{
 		float t = (float)((cellVisibleThreshold - valp1) / (valp2 - valp1));
@@ -340,5 +381,17 @@ public static class MarchingCubes
 
 		double ABC = (AB + BC + AC + BA + CB + CA) / 6.0;    // and return the average
 		return ABC;
+	}
+
+	static double Perlin2D(float nx, float ny, float nz)
+	{
+		return Mathf.PerlinNoise(nx, nz) * ny;
+	}
+	static double GetNoiseValue2D(Vector3 pos, Vector3 offset, Vector3 gridSize, float gridNoiseScale, float noiseHeight)
+	{
+		float nx = (offset.x + pos.x / gridSize.x) * gridNoiseScale;
+		float ny = (-offset.y + pos.y * (1f - noiseHeight) / gridSize.y) * gridNoiseScale;
+		float nz = (offset.z + pos.z / gridSize.z) * gridNoiseScale;
+		return Perlin2D(nx, ny, nz);
 	}
 }

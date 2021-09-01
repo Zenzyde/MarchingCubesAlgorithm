@@ -305,7 +305,7 @@ public static class CubeData
 
 	public enum CubeConfiguration
 	{
-		sphere, perlinNoise
+		sphere, perlinNoise, cube
 	}
 }
 
