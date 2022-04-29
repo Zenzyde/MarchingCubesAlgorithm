@@ -5,7 +5,7 @@ A static-class implementation of the MarchingCubes algorithm for creating a proc
 * Paul Bourke: http://paulbourke.net/geometry/polygonise/
 
 Visual example of the algorithm in action:
-![MarchingCubes visual](/images/MarchingCubes_Showcase.png)
+![MarchingCubes visual](/images/MarchingCubes_Showcase.gif)
 
 The static helper-method for creating the grid that is needed for the mesh to be created:
 ![Creating marching grid](/images/marchingCubes-grid-creation.png)
