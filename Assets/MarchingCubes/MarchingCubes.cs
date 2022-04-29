@@ -10,16 +10,16 @@ public static class MarchingCubes
 	private static List<int> triangles = new List<int>();
 	private static List<Vector2> uvs = new List<Vector2>();
 	private static Vector3 gridMin, gridMax, gridNoiseOffset;
-	private static float gridCellRadius, gridNoiseScale, gridNoiseHeight2D;
+	private static float gridCellRadius;
+	private static float gridNoiseScale, gridNoiseHeight2D;
 	private static double cellVisibleThreshold;
 	private static CubeData.CubeConfiguration configuration;
 	private static bool inverseTriangles = false;
 	private static bool gridHasUpdated = false;
-	private static bool march2D = false;
 	private static float specificConfigRadius;
 
-	public static List<GridCell> GetCreateGrid(Vector3 min, Vector3 max, Vector3 noiseOffset, float cellRadius, float noiseScale, double visibleThreshold,
-		CubeData.CubeConfiguration config = CubeData.CubeConfiguration.perlinNoise)
+	public static List<GridCell> CreateMarchingCubesGrid(Vector3 min, Vector3 max, Vector3 noiseOffset, float cellRadius, float noiseScale, double visibleThreshold,
+		CubeData.CubeConfiguration config = CubeData.CubeConfiguration.perlinNoise, float configRadius = 0.0f)
 	{
 		gridMin = min;
 		gridMax = max;
@@ -28,6 +28,7 @@ public static class MarchingCubes
 		gridNoiseOffset = noiseOffset;
 		gridNoiseScale = noiseScale;
 		configuration = config;
+		specificConfigRadius = configRadius;
 
 		vertices.Clear();
 		triangles.Clear();
@@ -36,25 +37,121 @@ public static class MarchingCubes
 		return BuildGridCells();
 	}
 
-	public static bool GetUpdatedGrid(out List<GridCell> grid)
+	public static bool TryUpdateGrid(ref List<GridCell> currentGrid, Vector3 updatePoint, bool add, float updateDelta, int range = 1)
 	{
-		grid = new List<GridCell>();
+		// convert updatePoint to gridcell position
+		//updatePoint = ConvertToGridPos(updatePoint);
 
-		if (!gridHasUpdated)
+		// find correct gridcell to update
+		List<GridCell> cells = new List<GridCell>();
+		// bool foundCell = false;
+		float magnitude = 0f;
+		for (int i = 0; i < currentGrid.Count; ++i)
 		{
+			GridCell currentCell = currentGrid[i];
+			for (int j = 0; j < currentCell.pos.Length; ++j)
+			{
+				magnitude = (currentCell.pos[j] - updatePoint).magnitude;
+				if (currentCell.pos[j] == updatePoint)
+				{
+					// cell = currentGrid[i];
+					// foundCell = true;
+					// if (foundCell)
+					// 	break;
+
+					if (!cells.Contains(currentGrid[i]))
+						cells.Add(currentGrid[i]);
+				}
+				else if (magnitude <= range)
+				{
+					if (!cells.Contains(currentGrid[i]))
+						cells.Add(currentGrid[i]);
+				}
+			}
+			// if (cells.Count >= 8)
+			// 	break;
+			// if (foundCell)
+			// 	break;
+		}
+
+		if (cells.Count == 0)//!foundCell)
+		{
+			Debug.LogWarning("No cell found!");
 			return false;
 		}
+
+		float distance = Mathf.Infinity;
+		float cellChangeDelta = 0f;
+		// update gridcell
+		if (add)
+		{
+			foreach (GridCell cell in cells)
+			{
+				for (int i = 0; i < cell.val.Length; ++i)
+				{
+					if (cell.val[i] >= 1.0)
+					{
+						cell.val[i] = 1.0;
+						continue;
+					}
+					distance = (updatePoint - cell.pos[i]).magnitude;
+					if (distance > range)
+						continue;
+					cellChangeDelta = updateDelta * (1f - (distance / range));
+					cell.val[i] += cellChangeDelta * Time.deltaTime;
+					// if (cell.pos[i] == updatePoint)
+					// {
+					// 	Debug.Log($"Adding to {updatePoint}, old: {cell.val[i]}, new: {cell.val[i] + .5f}");
+					// 	if (cell.val[i] >= 1.0)
+					// 	{
+					// 		cell.val[i] = 1.0;
+					// 		continue;
+					// 	}
+					// 	cell.val[i] += .5;
+					// }
+				}
+			}
+		}
+		else
+		{
+			foreach (GridCell cell in cells)
+			{
+				for (int i = 0; i < cell.val.Length; ++i)
+				{
+					if (cell.val[i] <= 0.0)
+					{
+						cell.val[i] = 0.0;
+						continue;
+					}
+					distance = (updatePoint - cell.pos[i]).magnitude;
+					if (distance > range)
+						continue;
+					cellChangeDelta = updateDelta * (1f - (distance / range));
+					cell.val[i] -= cellChangeDelta * Time.deltaTime;
+					// if (cell.pos[i] == updatePoint)
+					// {
+					// 	Debug.Log($"Adding to {updatePoint}, old: {cell.val[i]}, new: {cell.val[i] - .5f}");
+					// 	if (cell.val[i] <= 0.0)
+					// 	{
+					// 		cell.val[i] = 0.0;
+					// 		continue;
+					// 	}
+					// 	cell.val[i] -= .5;
+					// }
+				}
+			}
+		}
+
+		gridHasUpdated = true;
 
 		vertices.Clear();
 		triangles.Clear();
 		uvs.Clear();
 
-		grid = BuildGridCells();
-
 		return true;
 	}
 
-	public static bool TryGetMesh(List<GridCell> grid, out Mesh mesh)
+	public static bool TryGetMesh(List<GridCell> grid, out Mesh mesh, string name = "")
 	{
 		mesh = new Mesh();
 
@@ -64,7 +161,7 @@ public static class MarchingCubes
 		}
 
 		mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; //increase max vertices per mesh
-		mesh.name = "ProceduralMesh";
+		mesh.name = name == string.Empty ? "ProceduralMesh" : $"{name}_ProceduralMesh";
 
 		IEnumerator createMesh = CreateMesh(grid, cellVisibleThreshold);
 		bool done = !createMesh.MoveNext();
@@ -84,75 +181,18 @@ public static class MarchingCubes
 		return true;
 	}
 
-	public static Mesh GetPredefinedGridMesh(List<GridCell> grid)
-	{
-		Mesh mesh = new Mesh();
-
-		mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32; //increase max vertices per mesh
-		mesh.name = "ProceduralMesh";
-
-		IEnumerator createMesh = CreateMesh(grid, cellVisibleThreshold);
-		bool done = !createMesh.MoveNext();
-		while (!done)
-		{
-			done = !createMesh.MoveNext();
-		}
-
-		mesh.vertices = vertices.ToArray();
-		mesh.triangles = triangles.ToArray();
-		mesh.uv = uvs.ToArray();
-		mesh.RecalculateBounds();
-		mesh.RecalculateNormals();
-		return mesh;
-	}
-
-	public static void OverwriteOriginalWithManipulatedGrid(ref List<GridCell> original, List<GridCell> manipulated)
-	{
-		for (int i = original.Count - 1; i >= 0; i--)
-		{
-			for (int j = manipulated.Count - 1; j >= 0; j--)
-			{
-				if (original[i] == manipulated[j])
-				{
-					original[i] = manipulated[j];
-				}
-			}
-		}
-	}
-
-	public static void OverwriteOriginalWithManipulatedCell(ref List<GridCell> original, GridCell manipulated)
-	{
-		for (int i = original.Count - 1; i >= 0; i--)
-		{
-			if (original[i] == manipulated)
-			{
-				original[i] = manipulated;
-			}
-		}
-	}
-
 	public static void SetNoiseScale(float value) { if (value == gridNoiseScale) return; gridNoiseScale = value; gridHasUpdated = true; }
 	public static void SetNoiseOffset(Vector3 value) { if (value == gridNoiseOffset) return; gridNoiseOffset = value; gridHasUpdated = true; }
-	public static void SetGridRadius(float value) { if (value == gridCellRadius) return; gridCellRadius = value; gridHasUpdated = true; }
+	public static void SetGridRadius(int value) { if (value == gridCellRadius) return; gridCellRadius = value; gridHasUpdated = true; }
 	public static void SetCellVisibleThreshold(float value) { if (value == cellVisibleThreshold) return; cellVisibleThreshold = value; gridHasUpdated = true; }
 	public static void SetInverseTriangles(bool value) { if (value == inverseTriangles) return; inverseTriangles = value; gridHasUpdated = true; }
 	public static void SetGridMin(Vector3 value) { if (value == gridMin) return; gridMin = value; gridHasUpdated = true; }
 	public static void SetGridMax(Vector3 value) { if (value == gridMax) return; gridMax = value; gridHasUpdated = true; }
-	public static void SetMarch2D(bool state) { if (state == march2D) return; march2D = state; gridHasUpdated = true; }
 	public static void SetGridNoiseHeight2D(float value) { if (value == gridNoiseHeight2D) return; gridNoiseHeight2D = value; gridHasUpdated = true; }
-	public static void SetSpecificConfigRadius(float value) { if (value == specificConfigRadius) return; specificConfigRadius = value; gridHasUpdated = true; }
 
-	static bool IsCubeVertexPositionWithinRequestedPositionRadius(Vector3 cellPos, Vector3 checkPosition, float checkRadius)
+	static Vector3 ConvertToGridPos(Vector3 pos)
 	{
-		return cellPos.x > checkPosition.x - checkRadius && cellPos.x < checkPosition.x + checkRadius &&
-			cellPos.y > checkPosition.y - checkRadius && cellPos.y < checkPosition.y + checkRadius &&
-			cellPos.z > checkPosition.z - checkRadius && cellPos.z < checkPosition.z + checkRadius;
-	}
-
-	static double GetCubeDistanceToPosition(GridCell cubeCell, Vector3 checkPosition)
-	{
-		Vector3 center = (cubeCell.pos[0] + cubeCell.pos[6]) / 2f;
-		return Vector3.Distance(center, checkPosition);
+		return new Vector3(Mathf.FloorToInt(pos.x), Mathf.FloorToInt(pos.y), Mathf.FloorToInt(pos.z));
 	}
 
 	static List<GridCell> BuildGridCells()
@@ -161,17 +201,19 @@ public static class MarchingCubes
 
 		gridHasUpdated = true;
 
-		for (float x = gridMin.x; x < gridMax.x; x += gridCellRadius)
+		if (configuration == CubeData.CubeConfiguration.perlinNoise)
 		{
-			for (float z = gridMin.z; z < gridMax.z; z += gridCellRadius)
+			for (float x = gridMin.x; x < gridMax.x; x += gridCellRadius)
 			{
-				for (float y = gridMin.y; y < gridMax.y; y += gridCellRadius)
+				for (float z = gridMin.z; z < gridMax.z; z += gridCellRadius)
 				{
-					if (x + gridCellRadius > gridMax.x || y + gridCellRadius > gridMax.y || z + gridCellRadius > gridMax.z)
-						continue;
-					GridCell cell = new GridCell();
-					cell.pos = new Vector3[]
+					for (float y = gridMin.y; y < gridMax.y; y += gridCellRadius)
 					{
+						if (x + gridCellRadius > gridMax.x || y + gridCellRadius > gridMax.y || z + gridCellRadius > gridMax.z)
+							continue;
+						GridCell cell = new GridCell();
+						cell.pos = new Vector3[]
+						{
 						new Vector3(x, y, z + gridCellRadius), //LowFrontLeft
 						new Vector3(x + gridCellRadius, y, z + gridCellRadius), //LowFrontRight
 						new Vector3(x + gridCellRadius, y, z), //LowBackRight
@@ -181,54 +223,155 @@ public static class MarchingCubes
 						new Vector3(x + gridCellRadius, y + gridCellRadius, z + gridCellRadius), //HighFrontRight
 						new Vector3(x + gridCellRadius, y + gridCellRadius, z), //HighBackRight
 						new Vector3(x, y + gridCellRadius, z), //HighBackLeft						
-					};
-					cell.val = new double[8];
+						};
+						cell.val = new double[8];
 
-					if (configuration == CubeData.CubeConfiguration.perlinNoise)
-					{
-						if (!march2D)
-						{
-							for (int i = 0; i < cell.val.Length; i++)
-							{
-								cell.val[i] = GetNoiseValue(cell.pos[i], gridNoiseOffset, gridNoiseScale);
-							}
-						}
-						else
-						{
-							for (int i = 0; i < cell.val.Length; i++)
-							{
-								cell.val[i] = GetNoiseValue2D(cell.pos[i], gridNoiseOffset, (gridMax - gridMin), gridNoiseScale, gridNoiseHeight2D);
-							}
-						}
+						AssignNoiseValues(cell);
+
+						grid.Add(cell);
 					}
-					else if (configuration == CubeData.CubeConfiguration.sphere)
-					{
-						for (int i = 0; i < cell.val.Length; i++)
-						{
-							if (Vector3.Distance(cell.pos[i], (gridMin + gridMax) / 2f) < (specificConfigRadius == 0.0f ? 2f : specificConfigRadius))
-								cell.val[i] = 0;
-							else
-								cell.val[i] = 1;
-						}
-					}
-					else if (configuration == CubeData.CubeConfiguration.cube)
-					{
-						for (int i = 0; i < cell.val.Length; i++)
-						{
-							Vector3 differenceVector = (cell.pos[i] - ((gridMin + gridMax) / 2f));
-							Vector3 distance = specificConfigRadius == 0.0f ? new Vector3(2.5f, 2.5f, 2.5f) : Vector3.one * specificConfigRadius;
-							if (differenceVector.x < -distance.x || differenceVector.y < -distance.x || differenceVector.z < -distance.x ||
-								differenceVector.x > distance.x || differenceVector.y > distance.x || differenceVector.z > distance.x)
-								cell.val[i] = 1;
-							else
-								cell.val[i] = 0;
-						}
-					}
-					grid.Add(cell);
 				}
 			}
 		}
+		else if (configuration == CubeData.CubeConfiguration.perlinNoise2D)
+		{
+			for (float x = gridMin.x; x < gridMax.x; x += gridCellRadius)
+			{
+				for (float z = gridMin.z; z < gridMax.z; z += gridCellRadius)
+				{
+					for (float y = gridMin.y; y < gridMax.y; y += gridCellRadius)
+					{
+						if (x + gridCellRadius > gridMax.x || y + gridCellRadius > gridMax.y || z + gridCellRadius > gridMax.z)
+							continue;
+						GridCell cell = new GridCell();
+						cell.pos = new Vector3[]
+						{
+						new Vector3(x, y, z + gridCellRadius), //LowFrontLeft
+						new Vector3(x + gridCellRadius, y, z + gridCellRadius), //LowFrontRight
+						new Vector3(x + gridCellRadius, y, z), //LowBackRight
+						new Vector3(x, y, z), //LowBackLeft
+						
+						new Vector3(x, y + gridCellRadius, z + gridCellRadius), //HighFrontLeft
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z + gridCellRadius), //HighFrontRight
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z), //HighBackRight
+						new Vector3(x, y + gridCellRadius, z), //HighBackLeft						
+						};
+						cell.val = new double[8];
+
+						AssignNoiseValues2D(cell);
+
+						grid.Add(cell);
+					}
+				}
+			}
+		}
+		else if (configuration == CubeData.CubeConfiguration.sphere)
+		{
+			for (float x = gridMin.x; x < gridMax.x; x += gridCellRadius)
+			{
+				for (float z = gridMin.z; z < gridMax.z; z += gridCellRadius)
+				{
+					for (float y = gridMin.y; y < gridMax.y; y += gridCellRadius)
+					{
+						if (x + gridCellRadius > gridMax.x || y + gridCellRadius > gridMax.y || z + gridCellRadius > gridMax.z)
+							continue;
+						GridCell cell = new GridCell();
+						cell.pos = new Vector3[]
+						{
+						new Vector3(x, y, z + gridCellRadius), //LowFrontLeft
+						new Vector3(x + gridCellRadius, y, z + gridCellRadius), //LowFrontRight
+						new Vector3(x + gridCellRadius, y, z), //LowBackRight
+						new Vector3(x, y, z), //LowBackLeft
+						
+						new Vector3(x, y + gridCellRadius, z + gridCellRadius), //HighFrontLeft
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z + gridCellRadius), //HighFrontRight
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z), //HighBackRight
+						new Vector3(x, y + gridCellRadius, z), //HighBackLeft						
+						};
+						cell.val = new double[8];
+
+						AssignSphereValues(cell);
+
+						grid.Add(cell);
+					}
+				}
+			}
+		}
+		else if (configuration == CubeData.CubeConfiguration.cube)
+		{
+			for (float x = gridMin.x; x < gridMax.x; x += gridCellRadius)
+			{
+				for (float z = gridMin.z; z < gridMax.z; z += gridCellRadius)
+				{
+					for (float y = gridMin.y; y < gridMax.y; y += gridCellRadius)
+					{
+						if (x + gridCellRadius > gridMax.x || y + gridCellRadius > gridMax.y || z + gridCellRadius > gridMax.z)
+							continue;
+						GridCell cell = new GridCell();
+						cell.pos = new Vector3[]
+						{
+						new Vector3(x, y, z + gridCellRadius), //LowFrontLeft
+						new Vector3(x + gridCellRadius, y, z + gridCellRadius), //LowFrontRight
+						new Vector3(x + gridCellRadius, y, z), //LowBackRight
+						new Vector3(x, y, z), //LowBackLeft
+						
+						new Vector3(x, y + gridCellRadius, z + gridCellRadius), //HighFrontLeft
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z + gridCellRadius), //HighFrontRight
+						new Vector3(x + gridCellRadius, y + gridCellRadius, z), //HighBackRight
+						new Vector3(x, y + gridCellRadius, z), //HighBackLeft						
+						};
+						cell.val = new double[8];
+
+						AssignCubeValues(cell);
+
+						grid.Add(cell);
+					}
+				}
+			}
+		}
+
 		return grid;
+	}
+
+	static void AssignNoiseValues(GridCell cell)
+	{
+		for (int i = 0; i < cell.val.Length; i++)
+		{
+			cell.val[i] = GetNoiseValue(cell.pos[i], gridNoiseOffset, gridNoiseScale);
+		}
+	}
+
+	static void AssignNoiseValues2D(GridCell cell)
+	{
+		for (int i = 0; i < cell.val.Length; i++)
+		{
+			cell.val[i] = GetNoiseValue2D(cell.pos[i], gridNoiseOffset, (gridMax - gridMin), gridNoiseScale, gridNoiseHeight2D);
+		}
+	}
+
+	static void AssignSphereValues(GridCell cell)
+	{
+		for (int i = 0; i < cell.val.Length; i++)
+		{
+			if (Vector3.Distance(cell.pos[i], (gridMin + gridMax) / 2f) < (specificConfigRadius <= float.Epsilon ? 2f : specificConfigRadius))
+				cell.val[i] = 0;
+			else
+				cell.val[i] = 1;
+		}
+	}
+
+	static void AssignCubeValues(GridCell cell)
+	{
+		for (int i = 0; i < cell.val.Length; i++)
+		{
+			Vector3 differenceVector = (cell.pos[i] - ((gridMin + gridMax) / 2f));
+			Vector3 distance = specificConfigRadius <= float.Epsilon ? new Vector3(2.5f, 2.5f, 2.5f) : Vector3.one * specificConfigRadius;
+			if (differenceVector.x < -distance.x || differenceVector.y < -distance.x || differenceVector.z < -distance.x ||
+				differenceVector.x > distance.x || differenceVector.y > distance.x || differenceVector.z > distance.x)
+				cell.val[i] = 1;
+			else
+				cell.val[i] = 0;
+		}
 	}
 
 	static IEnumerator CreateMesh(List<GridCell> grid, double cellVisibleThreshold)
@@ -390,7 +533,7 @@ public static class MarchingCubes
 	static double GetNoiseValue2D(Vector3 pos, Vector3 offset, Vector3 gridSize, float gridNoiseScale, float noiseHeight)
 	{
 		float nx = (offset.x + pos.x / gridSize.x) * gridNoiseScale;
-		float ny = (-offset.y + pos.y * (1f - noiseHeight) / gridSize.y) * gridNoiseScale;
+		float ny = (pos.y * (1f / noiseHeight) / gridSize.y) * gridNoiseScale;
 		float nz = (offset.z + pos.z / gridSize.z) * gridNoiseScale;
 		return Perlin2D(nx, ny, nz);
 	}

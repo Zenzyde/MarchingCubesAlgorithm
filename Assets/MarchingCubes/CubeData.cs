@@ -42,7 +42,7 @@ public static class CubeData
 		0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0
 	};
 
-	//For finding "middle points" between primary corners not make up the triangles (not for finding the actual triangles themselves)
+	//For finding "middle points" between primary corners not making up the triangles (not for finding the actual triangles themselves)
 	public static int[][] triangleTable = new int[][]
 	{
 		new int[]{ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
@@ -305,7 +305,7 @@ public static class CubeData
 
 	public enum CubeConfiguration
 	{
-		sphere, perlinNoise, cube
+		sphere, perlinNoise, cube, perlinNoise2D
 	}
 }
 

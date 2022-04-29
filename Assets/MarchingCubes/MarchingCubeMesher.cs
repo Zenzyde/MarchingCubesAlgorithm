@@ -11,11 +11,14 @@ public class MarchingCubeMesher : MonoBehaviour
 	[SerializeField] private float gridHeight2D;
 	[SerializeField] private float specificConfigRadius;
 	[SerializeField] private CubeData.CubeConfiguration configuration = CubeData.CubeConfiguration.perlinNoise;
-	[SerializeField] private bool march2D, inverseTriangles;
+	[SerializeField] private bool inverseTriangles;
+	[SerializeField] private int morphingRange = 0;
+	[SerializeField] private float cellUpdateStrength = .01f;
 
 	private List<GridCell> gridCells = new List<GridCell>();
 
 	private MeshFilter filter;
+	private MeshCollider collider;
 
 	private bool drawBoxBounds, drawGridCells;
 
@@ -23,30 +26,47 @@ public class MarchingCubeMesher : MonoBehaviour
 	void Start()
 	{
 		filter = GetComponent<MeshFilter>();
-		MarchingCubes.SetMarch2D(march2D);
+		collider = GetComponent<MeshCollider>();
 		MarchingCubes.SetGridNoiseHeight2D(gridHeight2D);
-		gridCells = MarchingCubes.GetCreateGrid(transform.position, gridMax, gridNoiseOffset, gridCellRadius, gridNoiseScale, cellVisibleThreshold, configuration);
+		gridCells = MarchingCubes.CreateMarchingCubesGrid(transform.position, gridMax, gridNoiseOffset, gridCellRadius, gridNoiseScale, cellVisibleThreshold, configuration, specificConfigRadius);
 		if (MarchingCubes.TryGetMesh(gridCells, out Mesh mesh))
+		{
 			filter.mesh = mesh;
+			collider.sharedMesh = filter.mesh;
+		}
 	}
 
 	void Update()
 	{
-		if (Input.GetMouseButtonDown(0))
+		if (Input.GetMouseButton(0))
 		{
-			MarchingCubes.SetNoiseOffset(gridNoiseOffset);
-			MarchingCubes.SetGridMax(gridMax);
-			MarchingCubes.SetCellVisibleThreshold(cellVisibleThreshold);
-			MarchingCubes.SetGridRadius(gridCellRadius);
-			MarchingCubes.SetInverseTriangles(inverseTriangles);
-			MarchingCubes.SetNoiseScale(gridNoiseScale);
-			MarchingCubes.SetSpecificConfigRadius(specificConfigRadius);
-			MarchingCubes.SetMarch2D(march2D);
-			MarchingCubes.SetGridNoiseHeight2D(gridHeight2D);
-			if (MarchingCubes.GetUpdatedGrid(out List<GridCell> grid))
-				gridCells = grid;
-			if (MarchingCubes.TryGetMesh(gridCells, out Mesh mesh))
-				filter.mesh = mesh;
+			Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+			if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity))
+			{
+				if (MarchingCubes.TryUpdateGrid(ref gridCells, hit.point, true, cellUpdateStrength, morphingRange))
+				{
+					if (MarchingCubes.TryGetMesh(gridCells, out Mesh mesh))
+					{
+						filter.mesh = mesh;
+						collider.sharedMesh = filter.mesh;
+					}
+				}
+			}
+		}
+		else if (Input.GetMouseButton(1))
+		{
+			Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+			if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity))
+			{
+				if (MarchingCubes.TryUpdateGrid(ref gridCells, hit.point, false, cellUpdateStrength, morphingRange))
+				{
+					if (MarchingCubes.TryGetMesh(gridCells, out Mesh mesh))
+					{
+						filter.mesh = mesh;
+						collider.sharedMesh = filter.mesh;
+					}
+				}
+			}
 		}
 
 		if (Input.GetKeyDown(KeyCode.Alpha1))
